@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080808">
+    <meta name="description" content="학교와 마을을 오가며 작은 시간들을 살아가는 텍스트 생활 시뮬레이션, LittleTime.">
+    <title>LittleTime — 작은 시간들</title>
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+    <link rel="stylesheet" href="./src/styles.css">
+    <script type="module" src="./src/app.js"></script>
+  </head>
+  <body>
+    <a href="#game-main" class="skip-link">게임 내용으로 이동</a>
+    <div id="app"></div>
+    <dialog id="panel" aria-labelledby="panel-title"></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <input id="load-file" type="file" accept=".json,application/json" hidden>
+    <noscript>LittleTime을 플레이하려면 브라우저의 JavaScript를 켜 주세요.</noscript>
+  </body>
+</html>
