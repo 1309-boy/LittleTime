@@ -1,6 +1,7 @@
 import { Game, parseSave, dateText, timeText, dayNumber, minuteOfDay, moneyText } from './engine.js';
 import { CONFIG, STREETS, PLACES, SCENES, ACTIONS, NPCS, ITEMS, STAT_NAMES, NEED_NAMES } from './world.js';
 import { streetArt, hourglass, stationArt } from './art.js';
+import { SaveSlots } from './save-slots.js';
 
 const AUTO_KEY = 'LittleTime.autosave.v1';
 const SETTINGS_KEY = 'LittleTime.settings';
@@ -15,6 +16,8 @@ let toastTimer;
 let settings = { fontSize: 17, motion: true };
 let storageAvailable = true;
 let startupMessage = '';
+const slots = new SaveSlots(() => window.localStorage);
+let pendingSlot = null;
 try {
   const raw = localStorage.getItem(AUTO_KEY);
   if (raw) { game = new Game(parseSave(raw)); startupMessage = '마지막으로 머물던 곳에서 이어서 시작해.'; }
@@ -26,6 +29,8 @@ try {
 }
 
 function notify(message) {
+  const panelNotice = panel.querySelector('.panel-notice');
+  if (panel.open && panelNotice) panelNotice.textContent = message;
   toast.textContent = message;
   toast.classList.add('visible');
   clearTimeout(toastTimer);
@@ -156,17 +161,18 @@ function quickMap() {
 }
 function openPanel(id) {
   activePanel = id;
+  if (id !== 'slotConfirm') pendingSlot = null;
   if (id === 'map') mapMode = 'walk';
   renderPanel();
   if (!panel.open) panel.showModal();
 }
-function closePanel() { panel.close(); activePanel = null; }
+function closePanel() { panel.close(); activePanel = null; pendingSlot = null; }
 panel.addEventListener('close', () => { activePanel = null; });
 function renderPanel() {
   if (!activePanel) return;
-  const titles = { map:'마을 지도',status:'상태창',inventory:'인벤토리',relations:'인물 관계',journal:'하루 기록',save:'세이브 / 로드',settings:'설정',new:'새로운 하루' };
+  const titles = { map:'마을 지도',status:'상태창',inventory:'인벤토리',relations:'인물 관계',journal:'하루 기록',save:'세이브 / 로드',settings:'설정',new:'새로운 하루',slotConfirm:pendingSlot?.kind === 'save' ? '슬롯에 덮어쓰기' : '저장한 하루 불러오기' };
   panel.classList.toggle('map-panel', activePanel === 'map');
-  panel.innerHTML = `<header class="panel-header"><div><p class="eyebrow">LITTLE TIME</p><h2 id="panel-title">${titles[activePanel]}</h2></div>${btn('×', 'data-close aria-label="닫기"', false, 'close-button')}</header><div class="panel-body">${({map:renderMap,status:renderStatus,inventory:renderInventory,relations:renderRelations,journal:renderJournal,save:renderSave,settings:renderSettings,new:renderNew})[activePanel]()}</div>`;
+  panel.innerHTML = `<header class="panel-header"><div><p class="eyebrow">LITTLE TIME</p><h2 id="panel-title">${titles[activePanel]}</h2></div>${btn('×', 'data-close aria-label="닫기"', false, 'close-button')}</header><div class="panel-body">${({map:renderMap,status:renderStatus,inventory:renderInventory,relations:renderRelations,journal:renderJournal,save:renderSave,settings:renderSettings,new:renderNew,slotConfirm:renderSlotConfirm})[activePanel]()}</div><p class="panel-notice" role="status" aria-live="polite"></p>`;
 }
 function renderMap() {
   const s = game.state;
@@ -202,13 +208,47 @@ function renderJournal() {
   return `<p class="panel-note">최근 100개의 기록. 중요한 납부일과 만남도 이곳에 남아.</p><ol class="journal">${[...game.state.journal].reverse().map(entry => `<li><div><span>${dateText(entry.clock)}</span><time>${timeText(entry.clock)}</time></div><p>${escape(entry.text)}</p>${entry.kind === 'rent' ? '<small>주거 기록</small>' : entry.kind === 'story' ? '<small>이야기</small>' : ''}</li>`).join('')}</ol>`;
 }
 function renderSave() {
-  return `<p class="panel-note">진행은 이 브라우저에 자동 저장돼. 다른 기기에서 이어 하려면 파일로 저장하고 불러와 줘.</p><div class="save-summary"><span>${dateText(game.state.clock)} ${timeText(game.state.clock)}</span><strong>${STREETS[game.state.street].name}</strong><small>${moneyText(game.state.money)} · DAY ${dayNumber(game.state.clock) + 1}</small></div><div class="save-actions">${btn('↓ 저장 파일 내려받기', 'data-export', false, 'primary-button')}${btn('↑ 저장 파일 불러오기', 'data-import', false, 'secondary-button')}</div><p class="panel-note">시간, 소지품, 관계, 월세, 대화의 선택 위치까지 파일에 저장돼.</p><div class="new-game-area">${btn('새 게임 시작', 'data-panel="new"', false, 'text-button')}<small>현재 진행을 먼저 파일로 보관할 수 있어.</small></div>`;
+  const entries = slots.list();
+  return `<p class="panel-note">슬롯 1~10에 원하는 순간을 저장해 둬. 이 기기의 같은 브라우저에서 다시 불러올 수 있어.</p><div class="save-summary"><span>현재 진행 · ${dateText(game.state.clock)} ${timeText(game.state.clock)}</span><strong>${STREETS[game.state.street].name}</strong><small>${moneyText(game.state.money)} · DAY ${dayNumber(game.state.clock) + 1} · 별도 자동 저장</small></div>
+    <div class="section-label"><span>브라우저 저장 슬롯</span><span>${entries.filter(e => e.status === 'saved').length} / 10 사용 중</span></div>
+    <div class="save-slots">${entries.map(entry => renderSlot(entry)).join('')}</div>
+    <p class="panel-note slot-note">슬롯에는 시간, 소지품, 관계, 월세, 대화 위치가 모두 저장돼. 새 게임을 시작해도 슬롯은 남아 있어. 브라우저의 사이트 데이터를 지우면 저장도 사라져.</p>
+    <div class="section-label"><span>파일로 보관하기</span><span>다른 기기로 옮길 때</span></div><div class="save-actions">${btn('↓ 저장 파일 내려받기', 'data-export', false, 'secondary-button')}${btn('↑ 저장 파일 불러오기', 'data-import', false, 'secondary-button')}</div><div class="new-game-area">${btn('새 게임 시작', 'data-panel="new"', false, 'text-button')}<small>현재 진행을 슬롯이나 파일로 보관할 수 있어.</small></div>`;
+}
+function renderSlot(entry) {
+  const {slot, status, state, savedAt} = entry;
+  const title = status === 'saved' ? `${dateText(state.clock)} ${timeText(state.clock)}` : status === 'empty' ? '비어 있는 슬롯' : status === 'invalid' ? '저장 데이터를 읽을 수 없어' : '브라우저 저장을 사용할 수 없어';
+  const savedTime = savedAt ? new Date(savedAt).toLocaleString('ko-KR', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  const detail = state ? `${STREETS[state.street].name} · ${moneyText(state.money)} · DAY ${dayNumber(state.clock) + 1}` : status === 'empty' ? '현재 진행을 이곳에 저장할 수 있어.' : status === 'invalid' ? '파일 백업을 이용하거나 새 기록으로 덮어쓸 수 있어.' : '파일 저장을 이용해 줘.';
+  return `<article class="save-slot ${status === 'saved' ? 'filled' : ''}" aria-label="세이브 슬롯 ${slot}"><span class="slot-number">${String(slot).padStart(2,'0')}</span><div class="slot-copy"><h3>${escape(title)}</h3><p>${escape(detail)}</p>${savedTime ? `<small>저장 ${escape(savedTime)}</small>` : ''}</div><div class="slot-actions">${btn('저장', `data-slot-save="${slot}" aria-label="슬롯 ${slot}에 저장"`, status === 'unavailable', 'small-button')}${btn('불러오기', `data-slot-load="${slot}" aria-label="슬롯 ${slot} 불러오기"`, status !== 'saved', 'small-button')}</div></article>`;
+}
+function renderSlotConfirm() {
+  if (!pendingSlot) return '';
+  return `<p class="panel-note">${pendingSlot.kind === 'save' ? `슬롯 ${pendingSlot.slot}의 기존 기록을 현재 진행으로 바꿀까?` : `현재 진행 대신 슬롯 ${pendingSlot.slot}에 저장한 순간으로 돌아갈까? 현재 진행은 먼저 다른 슬롯이나 파일로 저장해 둘 수 있어.`}</p><div class="save-actions slot-confirm-actions">${btn(pendingSlot.kind === 'save' ? '이 슬롯에 덮어쓰기' : '저장한 하루 불러오기', 'data-slot-confirm', false, 'primary-button')}${btn('돌아가기', 'data-panel="save"', false, 'secondary-button')}</div>`;
+}
+function requestSlot(kind, slot) {
+  const entry = slots.inspect(slot);
+  if (kind === 'save' && entry.status === 'empty') return writeSlot(slot);
+  if (kind === 'load' && entry.status !== 'saved') { notify('불러올 수 없는 슬롯이야.'); return; }
+  if (entry.status === 'unavailable') { notify('브라우저 저장을 사용할 수 없어. 파일 저장을 이용해 줘.'); return; }
+  pendingSlot = {kind, slot}; openPanel('slotConfirm');
+}
+function writeSlot(slot) {
+  try { slots.save(slot, game); openPanel('save'); notify(`슬롯 ${slot}에 저장했어.`); }
+  catch (error) { notify(error.message); }
+}
+function confirmSlot() {
+  if (!pendingSlot) return;
+  const {kind, slot} = pendingSlot;
+  if (kind === 'save') return writeSlot(slot);
+  try { const restored = slots.load(slot); game = new Game(restored); persist(); closePanel(); render(); notify(`슬롯 ${slot}의 하루를 불러왔어.`); }
+  catch (error) { notify(error.message); }
 }
 function renderSettings() {
   return `<div class="setting-row"><div><h3>글자 크기</h3><p>읽기 편한 크기를 골라 줘.</p></div><div class="size-buttons">${[15,17,19,21].map(size => btn(`${size}`, `data-font="${size}" aria-label="글자 크기 ${size}"`, false, settings.fontSize === size ? 'active' : '')).join('')}</div></div><div class="setting-row"><div><h3>화면 효과</h3><p>짧은 등장 효과를 켜거나 끌 수 있어.</p></div>${btn(settings.motion ? '켜짐' : '꺼짐', 'data-motion', false, 'small-button')}</div><div class="panel-callout"><strong>키보드</strong><p>1–9 선택 · M 지도 · I 인벤토리 · S 세이브<br>Esc 창 닫기</p><small>지도나 상태창을 여는 동안 게임 시간은 흐르지 않아.</small></div>`;
 }
 function renderNew() {
-  return `<p class="panel-note">지금까지의 자동 저장을 새 게임으로 바꾸게 돼. 파일로 저장한 기록은 나중에 다시 불러올 수 있어.</p><div class="save-actions">${btn('현재 진행을 파일로 저장', 'data-export', false, 'secondary-button')}${btn('새로운 하루 시작', 'data-new-game', false, 'primary-button')}${btn('계속 플레이', 'data-close', false, 'text-button')}</div>`;
+  return `<p class="panel-note">지금까지의 자동 저장을 새 게임으로 바꾸게 돼. 슬롯 1~10과 파일로 보관한 기록은 그대로 남아 있어.</p><div class="save-actions">${btn('슬롯에 저장하러 가기', 'data-panel="save"', false, 'secondary-button')}${btn('현재 진행을 파일로 저장', 'data-export', false, 'secondary-button')}${btn('새로운 하루 시작', 'data-new-game', false, 'primary-button')}${btn('계속 플레이', 'data-close', false, 'text-button')}</div>`;
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* 현재 세션의 설정은 계속 적용 */ }
@@ -232,6 +272,9 @@ document.addEventListener('click', event => {
   if (ownData(d,'confirmChoice')) return act(() => game.choose(game.state.scene.selected));
   if (d.wait) return act(() => game.wait(Number(d.wait)));
   if (d.use) return act(() => game.useItem(d.use));
+  if (d.slotSave) return requestSlot('save', Number(d.slotSave));
+  if (d.slotLoad) return requestSlot('load', Number(d.slotLoad));
+  if (ownData(d,'slotConfirm')) return confirmSlot();
   if (ownData(d,'export')) return downloadSave();
   if (ownData(d,'import')) { document.querySelector('#load-file').click(); return; }
   if (ownData(d,'newGame')) return act(() => { game = new Game(); }, { close:true });
