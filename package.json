@@ -1,6 +1,6 @@
 {
   "name": "little-time",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "학교와 마을에서 살아가는 텍스트 생활 시뮬레이션",
